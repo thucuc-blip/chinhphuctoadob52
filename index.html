@@ -1,0 +1,1385 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Mô Phỏng 3D: Tọa độ Không gian Oxyz - Bắn Tên Lửa</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <!-- OrbitControls -->
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+    <style>
+        body { margin: 0; overflow: hidden; background-color: #000; font-family: 'Inter', sans-serif; }
+        #canvas-container { position: absolute; top: 0; left: 0; width: 100vw; height: 100vh; z-index: 1; }
+        
+        /* UI Overlay */
+        #ui-layer {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            pointer-events: none; z-index: 10; display: flex; flex-direction: column; justify-content: flex-start;
+        }
+        
+        .panel {
+            pointer-events: auto;
+            background: rgba(15, 23, 42, 0.85);
+            backdrop-filter: blur(8px);
+            border: 1px solid rgba(56, 189, 248, 0.3);
+            box-shadow: 0 0 20px rgba(0, 0, 0, 0.5), inset 0 0 10px rgba(56, 189, 248, 0.1);
+            color: white;
+            transition: all 0.3s ease;
+        }
+
+        .step-container { opacity: 0.5; pointer-events: none; transition: opacity 0.3s; }
+        .step-container.active { opacity: 1; pointer-events: auto; }
+        .step-container.completed { opacity: 0.7; border-color: #22c55e; }
+
+        input[type="number"] {
+            background: rgba(30, 41, 59, 0.8); border: 1px solid #475569;
+            color: #38bdf8; text-align: center; font-weight: bold;
+            -moz-appearance: textfield;
+        }
+        input[type="number"]::-webkit-outer-spin-button,
+        input[type="number"]::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+
+        .btn-action {
+            background: linear-gradient(135deg, #0ea5e9, #2563eb);
+            transition: all 0.2s; text-transform: uppercase; font-weight: bold; letter-spacing: 1px;
+        }
+        .btn-action:hover { background: linear-gradient(135deg, #38bdf8, #3b82f6); box-shadow: 0 0 15px rgba(56, 189, 248, 0.6); transform: translateY(-1px); }
+        .btn-action:active { transform: translateY(1px); }
+
+        .btn-fire {
+            background: linear-gradient(135deg, #ef4444, #b91c1c);
+            animation: pulse-red 1.5s infinite;
+            display: none;
+        }
+        .btn-fire:hover { background: linear-gradient(135deg, #f87171, #dc2626); box-shadow: 0 0 20px rgba(239, 68, 68, 0.8); }
+
+        @keyframes pulse-red {
+            0% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.7); }
+            70% { box-shadow: 0 0 0 15px rgba(239, 68, 68, 0); }
+            100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0); }
+        }
+
+        .message-box {
+            position: absolute; top: 20px; left: 50%; transform: translateX(-50%);
+            background: rgba(0, 0, 0, 0.8); border: 2px solid #ef4444; color: #f87171;
+            padding: 15px 30px; border-radius: 10px; font-size: 1.5rem; font-weight: bold;
+            text-shadow: 0 0 10px #ef4444; opacity: 0; transition: opacity 0.5s; z-index: 50; text-align: center;
+        }
+
+        .num-ctrl { display: flex; align-items: center; justify-content: center; gap: 5px; }
+        .ctrl-btn { 
+            background: #334155; color: white; width: 24px; height: 24px; border-radius: 4px; 
+            cursor: pointer; display: flex; align-items: center; justify-content: center; font-size: 14px; user-select: none;
+        }
+        .ctrl-btn:hover { background: #475569; }
+
+        /* Custom scrollbar for UI */
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: #475569; border-radius: 3px; }
+    </style>
+</head>
+<body>
+
+    <div id="canvas-container"></div>
+
+    <div id="msg-box" class="message-box"></div>
+
+    <div id="ui-layer" class="p-3 pointer-events-none">
+        
+        <!-- Top Header Info -->
+        <div class="panel rounded-xl p-3 w-[280px] md:w-[320px] mb-3 pointer-events-auto">
+            <h1 class="text-base font-bold text-sky-400 mb-1 border-b border-sky-800 pb-1">MÔ PHỎNG CHIẾN ĐẤU PHÒNG KHÔNG</h1>
+            <p class="text-xs text-gray-300 mb-1">Căn cứ Tên lửa (A): <span class="text-white font-mono bg-slate-800 px-1 rounded">A(7; 5; 0)</span></p>
+            <p class="text-xs text-gray-300">Mục tiêu B-52 (B): <span class="text-white font-mono bg-slate-800 px-1 rounded">B(10; 9; 12)</span></p>
+        </div>
+
+        <!-- Sidebar Actions -->
+        <div class="flex flex-col gap-3 w-[280px] md:w-[320px] overflow-y-auto max-h-[75vh] pr-2 pb-10 pointer-events-auto">
+            
+            <!-- Step 1 -->
+            <div id="step1" class="panel rounded-xl p-3 step-container active">
+                <h2 class="text-sm font-semibold text-yellow-400 mb-1">Bước 1: Xác định tọa độ hình chiếu H</h2>
+                <p class="text-[11px] text-gray-400 mb-2">Tìm tọa độ hình chiếu vuông góc H của máy bay B lên mặt đất (Oxy).</p>
+                <div class="flex justify-between items-center mb-2">
+                    <div class="num-ctrl">
+                        <span class="text-red-400 font-bold text-xs">X</span>
+                        <div class="flex flex-col">
+                            <div class="ctrl-btn !w-5 !h-5 !text-xs" onclick="adj('hX', 1)">▲</div>
+                            <input type="number" id="hX" value="0" class="w-10 h-6 text-xs rounded" />
+                            <div class="ctrl-btn !w-5 !h-5 !text-xs" onclick="adj('hX', -1)">▼</div>
+                        </div>
+                    </div>
+                    <div class="num-ctrl">
+                        <span class="text-blue-400 font-bold text-xs">Y</span>
+                        <div class="flex flex-col">
+                            <div class="ctrl-btn !w-5 !h-5 !text-xs" onclick="adj('hY', 1)">▲</div>
+                            <input type="number" id="hY" value="0" class="w-10 h-6 text-xs rounded" />
+                            <div class="ctrl-btn !w-5 !h-5 !text-xs" onclick="adj('hY', -1)">▼</div>
+                        </div>
+                    </div>
+                    <div class="num-ctrl">
+                        <span class="text-green-400 font-bold text-xs">Z</span>
+                        <div class="flex flex-col">
+                            <div class="ctrl-btn !w-5 !h-5 !text-xs" onclick="adj('hZ', 1)">▲</div>
+                            <input type="number" id="hZ" value="0" class="w-10 h-6 text-xs rounded" />
+                            <div class="ctrl-btn !w-5 !h-5 !text-xs" onclick="adj('hZ', -1)">▼</div>
+                        </div>
+                    </div>
+                </div>
+                <button onclick="checkStep1()" class="btn-action w-full py-1.5 rounded shadow text-xs">Kiểm tra</button>
+                <p id="hint1" class="text-[11px] text-rose-400 mt-1 hidden"></p>
+            </div>
+
+            <!-- Step 2 -->
+            <div id="step2" class="panel rounded-xl p-3 step-container">
+                <h2 class="text-sm font-semibold text-yellow-400 mb-1">Bước 2: Tìm Vectơ AB</h2>
+                <p class="text-[11px] text-gray-400 mb-2">Tính tọa độ vectơ $\vec{AB}$ chỉ hướng từ A đến B.</p>
+                <div class="flex flex-col gap-2 mb-2">
+                    <div class="slider-ctrl">
+                        <div class="flex justify-between text-xs mb-0.5"><span class="text-gray-300 font-bold">Hoành độ (x)</span><span id="vX_val" class="text-white font-mono bg-slate-700 px-1.5 py-0.5 rounded shadow-inner">0</span></div>
+                        <input type="range" id="vX" min="-20" max="20" value="0" class="w-full h-1.5 accent-sky-500 cursor-pointer" oninput="document.getElementById('vX_val').innerText = this.value" />
+                    </div>
+                    <div class="slider-ctrl">
+                        <div class="flex justify-between text-xs mb-0.5"><span class="text-gray-300 font-bold">Tung độ (y)</span><span id="vY_val" class="text-white font-mono bg-slate-700 px-1.5 py-0.5 rounded shadow-inner">0</span></div>
+                        <input type="range" id="vY" min="-20" max="20" value="0" class="w-full h-1.5 accent-sky-500 cursor-pointer" oninput="document.getElementById('vY_val').innerText = this.value" />
+                    </div>
+                    <div class="slider-ctrl">
+                        <div class="flex justify-between text-xs mb-0.5"><span class="text-gray-300 font-bold">Cao độ (z)</span><span id="vZ_val" class="text-white font-mono bg-slate-700 px-1.5 py-0.5 rounded shadow-inner">0</span></div>
+                        <input type="range" id="vZ" min="-20" max="20" value="0" class="w-full h-1.5 accent-sky-500 cursor-pointer" oninput="document.getElementById('vZ_val').innerText = this.value" />
+                    </div>
+                </div>
+                <button onclick="checkStep2()" class="btn-action w-full py-1.5 rounded shadow text-xs">Xác nhận Vectơ</button>
+                <p id="hint2" class="text-[11px] text-rose-400 mt-1 hidden">Sai. $\vec{AB} = (x_B - x_A; y_B - y_A; z_B - z_A)$</p>
+            </div>
+
+            <!-- Step 3 -->
+            <div id="step3" class="panel rounded-xl p-3 step-container">
+                <h2 class="text-sm font-semibold text-yellow-400 mb-1">Bước 3: Tính góc ngắm</h2>
+                <p class="text-[11px] text-gray-400 mb-2">Tính góc $\widehat{BAH}$ giữa vectơ $\vec{AB}$ và $\vec{AH}$ (làm tròn đến độ).</p>
+                <div class="flex items-center justify-center gap-2 mb-2">
+                    <span class="text-white font-bold text-xs">Góc $\approx$</span>
+                    <div class="flex flex-col">
+                        <div class="ctrl-btn w-full !h-4 !text-[10px]" onclick="adj('angle', 1)">▲</div>
+                        <input type="number" id="angle" value="0" class="w-14 h-6 text-sm rounded" />
+                        <div class="ctrl-btn w-full !h-4 !text-[10px]" onclick="adj('angle', -1)">▼</div>
+                    </div>
+                    <span class="text-white text-xs">độ</span>
+                </div>
+                <button onclick="checkStep3()" class="btn-action w-full py-1.5 rounded shadow text-xs">Khoá mục tiêu</button>
+                <p id="hint3" class="text-[11px] text-rose-400 mt-1 hidden">Sai. Tính $\cos(\widehat{BAH}) = \frac{|\vec{AH}|}{|\vec{AB}|}$</p>
+            </div>
+
+            <!-- Fire Button -->
+            <button id="btn-fire" onclick="fireMissile()" class="btn-action btn-fire w-full py-3 rounded-xl shadow-lg text-sm mt-2 pointer-events-auto">
+                🚀 KHAI HỎA!
+            </button>
+        </div>
+    </div>
+
+    <script>
+        // --- AUDIO SYSTEM ---
+        const AudioContext = window.AudioContext || window.webkitAudioContext;
+        let audioCtx;
+
+        function initAudio() {
+            if (!audioCtx) audioCtx = new AudioContext();
+        }
+
+        function playSound(type) {
+            if (!audioCtx) return;
+            
+            const osc = audioCtx.createOscillator();
+            const gainNode = audioCtx.createGain();
+            osc.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+
+            const now = audioCtx.currentTime;
+
+            if (type === 'launch') {
+                osc.type = 'sawtooth';
+                osc.frequency.setValueAtTime(150, now);
+                osc.frequency.exponentialRampToValueAtTime(800, now + 1.5);
+                gainNode.gain.setValueAtTime(0, now);
+                gainNode.gain.linearRampToValueAtTime(0.5, now + 0.1);
+                gainNode.gain.linearRampToValueAtTime(0, now + 1.5);
+                
+                // Add some noise for rocket thrust
+                const bufferSize = audioCtx.sampleRate * 1.5;
+                const buffer = audioCtx.createBuffer(1, bufferSize, audioCtx.sampleRate);
+                const data = buffer.getChannelData(0);
+                for (let i = 0; i < bufferSize; i++) data[i] = Math.random() * 2 - 1;
+                const noise = audioCtx.createBufferSource();
+                noise.buffer = buffer;
+                const noiseFilter = audioCtx.createBiquadFilter();
+                noiseFilter.type = 'lowpass';
+                noiseFilter.frequency.value = 1000;
+                noise.connect(noiseFilter);
+                noiseFilter.connect(gainNode);
+                noise.start(now);
+                
+                osc.start(now);
+                osc.stop(now + 1.5);
+            } else if (type === 'explosion') {
+                // Synthesize explosion noise
+                const bufferSize = audioCtx.sampleRate * 2.0;
+                const buffer = audioCtx.createBuffer(1, bufferSize, audioCtx.sampleRate);
+                const data = buffer.getChannelData(0);
+                for (let i = 0; i < bufferSize; i++) data[i] = Math.random() * 2 - 1;
+                
+                const noise = audioCtx.createBufferSource();
+                noise.buffer = buffer;
+                
+                const filter = audioCtx.createBiquadFilter();
+                filter.type = 'lowpass';
+                filter.frequency.setValueAtTime(1000, now);
+                filter.frequency.exponentialRampToValueAtTime(100, now + 1.5);
+                
+                gainNode.gain.setValueAtTime(1, now);
+                gainNode.gain.exponentialRampToValueAtTime(0.01, now + 1.5);
+                
+                noise.connect(filter);
+                filter.connect(gainNode);
+                noise.start(now);
+            }
+        }
+
+        // --- UI HELPERS ---
+        function adj(id, val) {
+            const el = document.getElementById(id);
+            el.value = parseInt(el.value || 0) + val;
+        }
+
+        function showMessage(msg, type="success") {
+            const box = document.getElementById('msg-box');
+            box.innerHTML = msg;
+            box.style.borderColor = type === 'success' ? '#22c55e' : '#ef4444';
+            box.style.color = type === 'success' ? '#4ade80' : '#f87171';
+            box.style.textShadow = `0 0 10px ${type === 'success' ? '#22c55e' : '#ef4444'}`;
+            box.style.opacity = 1;
+            setTimeout(() => { box.style.opacity = 0; }, 4000);
+        }
+
+        // --- THREE.JS SETUP ---
+        const STATE = {
+            A: { x: 7, y: 5, z: 0 },
+            B: { x: 10, y: 9, z: 12 },
+            H: { x: 10, y: 9, z: 0 },
+            step: 1,
+            isLocked: false,
+            isFiring: false,
+            missileSpeed: 8,
+            particles: [],
+            debris: []
+        };
+
+        const scene = new THREE.Scene();
+        scene.fog = new THREE.FogExp2(0x2a1b4e, 0.015); // Updated fog to match pink-purple-blue sky
+
+        const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 1000);
+        const renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.setClearColor(0x311e5b); // Magical purple-blue night sky background
+        renderer.shadowMap.enabled = true;
+        document.getElementById('canvas-container').appendChild(renderer.domElement);
+
+        const controls = new THREE.OrbitControls(camera, renderer.domElement);
+        camera.position.set(15, 8, 25);
+        controls.target.set(5, 5, 5);
+        controls.update();
+
+        // Lighting
+        const ambientLight = new THREE.AmbientLight(0x404040, 1.5);
+        scene.add(ambientLight);
+        const dirLight = new THREE.DirectionalLight(0xffffff, 1);
+        dirLight.position.set(20, 30, 20);
+        dirLight.castShadow = true;
+        scene.add(dirLight);
+
+        // Math standard to Three.js mapping:
+        // Math: Oxy is ground, Z is height. X right, Y depth.
+        // Three: X right, Y height, Z out of screen (-Z is depth).
+        function pos(x, y, z) {
+            return new THREE.Vector3(x, z, -y); // Z in Math becomes Y in Three. Y in Math becomes -Z in Three.
+        }
+
+        // Ground Plane (Oxy)
+        const groundGeo = new THREE.PlaneGeometry(30, 30);
+        const groundMat = new THREE.MeshStandardMaterial({ 
+            color: 0x1f2937, 
+            roughness: 0.8,
+            metalness: 0.2
+        });
+        const ground = new THREE.Mesh(groundGeo, groundMat);
+        ground.rotation.x = -Math.PI / 2; // Lay flat
+        ground.position.set(10, -0.01, -10); // Offset to show positive quadrant mostly
+        ground.receiveShadow = true;
+        scene.add(ground);
+
+        // Grid helper on ground
+        const grid = new THREE.GridHelper(30, 30, 0x475569, 0x334155);
+        grid.position.set(10, 0, -10);
+        scene.add(grid);
+
+        // Axes Drawing
+        function createTextSprite(message, color, font = "Bold 60px Arial") {
+            const canvas = document.createElement('canvas');
+            const context = canvas.getContext('2d');
+            canvas.width = 128; canvas.height = 128;
+            context.font = font;
+            context.fillStyle = color;
+            context.textAlign = "center";
+            context.textBaseline = "middle";
+            context.fillText(message, 64, 64);
+            const texture = new THREE.CanvasTexture(canvas);
+            const spriteMaterial = new THREE.SpriteMaterial({ map: texture, depthTest: false });
+            const sprite = new THREE.Sprite(spriteMaterial);
+            sprite.scale.set(1.5, 1.5, 1);
+            return sprite;
+        }
+
+        function drawAxis(endPt, colorHex, label) {
+            const start = endPt.clone().multiplyScalar(-1); // Kéo dài trục ra phía âm
+            
+            // Vẽ trục bằng hình trụ (Cylinder) để đảm bảo độ dày rõ nét trên mọi trình duyệt
+            const dir = new THREE.Vector3().subVectors(endPt, start);
+            const length = dir.length();
+            const cylinderGeo = new THREE.CylinderGeometry(0.12, 0.12, length, 8);
+            const material = new THREE.MeshBasicMaterial({ color: colorHex });
+            const cylinder = new THREE.Mesh(cylinderGeo, material);
+            cylinder.geometry.translate(0, length / 2, 0);
+            cylinder.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir.clone().normalize());
+            cylinder.position.copy(start);
+            scene.add(cylinder);
+
+            // Đầu mũi tên (Cone) to và rõ hơn thay vì dùng ArrowHelper mờ
+            const coneGeo = new THREE.ConeGeometry(0.4, 1.5, 16);
+            const cone = new THREE.Mesh(coneGeo, material);
+            cone.position.copy(endPt);
+            cone.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir.clone().normalize());
+            scene.add(cone);
+
+            // Xử lý màu sắc cho chữ (chuyển mã màu Hex sang chuỗi CSS để canvas đọc được)
+            const colorStr = '#' + colorHex.toString(16).padStart(6, '0');
+            
+            // Render chữ thường, phông to (90px) và cùng màu với trục
+            const sprite = createTextSprite(label.toLowerCase(), colorStr, "Bold 90px Arial");
+            sprite.scale.set(3, 3, 1); // Phóng to toàn bộ nhãn
+            
+            // Dịch chữ ra xa đầu mũi tên một chút để không bị che khuất
+            const offset = dir.clone().normalize().multiplyScalar(2.0);
+            sprite.position.copy(endPt).add(offset);
+            scene.add(sprite);
+        }
+
+        // Ox (Màu nâu vàng - Right) -> Three X
+        drawAxis(pos(15, 0, 0), 0xb8860b, "x");
+        // Oy (Blue - Depth) -> Three -Z
+        drawAxis(pos(0, 15, 0), 0x0088ff, "y");
+        // Oz (Green - Height) -> Three Y
+        drawAxis(pos(0, 0, 15), 0x00ff00, "z");
+        
+        // Origin O
+        const spriteO = createTextSprite("O", "#ffffff");
+        spriteO.position.copy(pos(-0.8, -0.8, 0)); // Dịch chữ O ra xíu để không kẹt vào góc
+        scene.add(spriteO);
+
+        // Add ticks (Bổ sung vạch chia cho cả chiều âm)
+        for(let i=-14; i<=14; i++) {
+            if(i === 0) continue;
+            // X ticks (Màu nâu vàng)
+            let tx = createTextSprite(i.toString(), "#d4a373");
+            tx.scale.set(0.8, 0.8, 1); tx.position.copy(pos(i, -0.6, 0)); scene.add(tx);
+            let lineX = new THREE.Line(new THREE.BufferGeometry().setFromPoints([pos(i, -0.2, 0), pos(i, 0.2, 0)]), new THREE.LineBasicMaterial({color: 0xb8860b})); scene.add(lineX);
+
+            // Y ticks
+            let ty = createTextSprite(i.toString(), "#88ccff");
+            ty.scale.set(0.8, 0.8, 1); ty.position.copy(pos(-0.6, i, 0)); scene.add(ty);
+            let lineY = new THREE.Line(new THREE.BufferGeometry().setFromPoints([pos(-0.2, i, 0), pos(0.2, i, 0)]), new THREE.LineBasicMaterial({color: 0x0088ff})); scene.add(lineY);
+
+            // Z ticks
+            let tz = createTextSprite(i.toString(), "#88ff88");
+            tz.scale.set(0.8, 0.8, 1); tz.position.copy(pos(-0.6, 0, i)); scene.add(tz);
+            let lineZ = new THREE.Line(new THREE.BufferGeometry().setFromPoints([pos(-0.2, 0, i), pos(0.2, 0, i)]), new THREE.LineBasicMaterial({color: 0x00ff00})); scene.add(lineZ);
+        }
+
+        // Texture Helper cho Cờ Đỏ Sao Vàng
+        function createVietnamFlagTexture() {
+            const canvas = document.createElement('canvas');
+            canvas.width = 512; canvas.height = 256;
+            const ctx = canvas.getContext('2d');
+            
+            // Nền đỏ
+            ctx.fillStyle = '#da251d';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Sao vàng
+            ctx.fillStyle = '#ffff00';
+            const cx = canvas.width / 2;
+            const cy = canvas.height / 2;
+            const outerRadius = 60;
+            const innerRadius = 23;
+            const spikes = 5;
+            
+            ctx.beginPath();
+            let rot = Math.PI / 2 * 3;
+            let step = Math.PI / spikes;
+            ctx.moveTo(cx, cy - outerRadius);
+            for (let i = 0; i < spikes; i++) {
+                ctx.lineTo(cx + Math.cos(rot) * outerRadius, cy + Math.sin(rot) * outerRadius);
+                rot += step;
+                ctx.lineTo(cx + Math.cos(rot) * innerRadius, cy + Math.sin(rot) * innerRadius);
+                rot += step;
+            }
+            ctx.closePath();
+            ctx.fill();
+            
+            const tex = new THREE.CanvasTexture(canvas);
+            tex.wrapS = THREE.RepeatWrapping;
+            tex.wrapT = THREE.RepeatWrapping;
+            tex.rotation = -Math.PI / 2; // Xoay dọc theo thân tên lửa
+            return tex;
+        }
+
+        // Helper materials
+        const camoGreen = new THREE.MeshStandardMaterial({ color: 0x4a5d23, roughness: 0.7 });
+        const camoDark = new THREE.MeshStandardMaterial({ color: 0x3b3c36, roughness: 0.8 });
+        const metalMat = new THREE.MeshStandardMaterial({ color: 0x888888, metalness: 0.6, roughness: 0.4 });
+        
+        function createCamoTexture() {
+            const canvas = document.createElement('canvas');
+            canvas.width = 512; canvas.height = 512;
+            const ctx = canvas.getContext('2d');
+
+            // Màu nền vàng cát (Tan)
+            ctx.fillStyle = '#c2b280';
+            ctx.fillRect(0, 0, 512, 512);
+
+            // Hàm vẽ các đốm rằn ri
+            function drawBlobs(color, count, size) {
+                ctx.fillStyle = color;
+                for (let i = 0; i < count; i++) {
+                    ctx.beginPath();
+                    let x = Math.random() * 512;
+                    let y = Math.random() * 512;
+                    ctx.moveTo(x, y);
+                    for (let j = 0; j < 6; j++) {
+                        let rx = x + (Math.random() - 0.5) * size;
+                        let ry = y + (Math.random() - 0.5) * size;
+                        let cpX = x + (Math.random() - 0.5) * size * 1.5;
+                        let cpY = y + (Math.random() - 0.5) * size * 1.5;
+                        ctx.quadraticCurveTo(cpX, cpY, rx, ry);
+                        x = rx; y = ry;
+                    }
+                    ctx.fill();
+                }
+            }
+
+            // Vẽ đốm xanh lục và nâu đậm
+            drawBlobs('#4a5d23', 25, 180); // Xanh lục
+            drawBlobs('#654321', 20, 150); // Nâu
+            drawBlobs('#3b2f2f', 15, 100); // Nâu đen
+
+            const tex = new THREE.CanvasTexture(canvas);
+            tex.wrapS = THREE.RepeatWrapping;
+            tex.wrapT = THREE.RepeatWrapping;
+            return tex;
+        }
+
+        const b52CamoTex = createCamoTexture();
+        const b52CamoMat = new THREE.MeshStandardMaterial({ map: b52CamoTex, roughness: 0.9 });
+
+        const flagTex = createVietnamFlagTexture();
+        const flagMat = new THREE.MeshStandardMaterial({ map: flagTex, roughness: 0.5, metalness: 0.1 });
+
+        // --- Missile & Launcher Model ---
+        const launcherGroup = new THREE.Group();
+        
+        // Base
+        const baseGeo = new THREE.BoxGeometry(2, 0.5, 2);
+        const base = new THREE.Mesh(baseGeo, camoDark);
+        base.position.y = 0.25;
+        launcherGroup.add(base);
+
+        // Arm
+        const armGeo = new THREE.CylinderGeometry(0.3, 0.3, 2);
+        const arm = new THREE.Mesh(armGeo, camoGreen);
+        arm.rotation.x = Math.PI / 4;
+        arm.position.y = 1;
+        launcherGroup.add(arm);
+
+        // Missile Group (to be rotated easily)
+        const missileWrapper = new THREE.Group();
+        
+        const missileGeo = new THREE.CylinderGeometry(0.2, 0.2, 3, 32);
+        const missileBody = new THREE.Mesh(missileGeo, flagMat);
+        missileBody.rotation.x = Math.PI / 2; // Point forward along Z initially
+        missileWrapper.add(missileBody);
+
+        const tipGeo = new THREE.ConeGeometry(0.2, 0.8, 16);
+        const tip = new THREE.Mesh(tipGeo, metalMat);
+        tip.position.z = 1.9; // Front of cylinder
+        tip.rotation.x = Math.PI / 2;
+        missileWrapper.add(tip);
+
+        // Fins
+        const finGeo = new THREE.BoxGeometry(0.1, 0.8, 0.6);
+        for(let i=0; i<4; i++) {
+            const fin = new THREE.Mesh(finGeo, camoDark);
+            fin.position.z = -1.2;
+            fin.rotation.z = (Math.PI / 2) * i;
+            if(i%2!==0) fin.position.y = i===1 ? 0.3 : -0.3;
+            else { fin.position.x = i===0 ? 0.3 : -0.3; fin.rotation.z += Math.PI/2;}
+            missileWrapper.add(fin);
+        }
+
+        // Positioning
+        missileWrapper.position.set(0, 1.5, 0); // Attach to arm
+        launcherGroup.add(missileWrapper);
+
+        const posA = pos(STATE.A.x, STATE.A.y, STATE.A.z);
+        launcherGroup.position.copy(posA);
+        scene.add(launcherGroup);
+
+        // --- B-52 Model ---
+        const b52Group = new THREE.Group();
+        
+        // Fuselage (Thân máy bay)
+        const fuseGeo = new THREE.CylinderGeometry(0.3, 0.35, 6, 16);
+        const fuselage = new THREE.Mesh(fuseGeo, b52CamoMat);
+        fuselage.rotation.x = Math.PI / 2;
+        b52Group.add(fuselage);
+
+        // Pointy Nose (Đầu nhọn hoắt)
+        const noseGeo = new THREE.ConeGeometry(0.3, 1.2, 16);
+        const nose = new THREE.Mesh(noseGeo, b52CamoMat);
+        nose.rotation.x = Math.PI / 2;
+        nose.position.z = 3.6; // Đưa ra phía trước thân
+        b52Group.add(nose);
+
+        // Cấu hình vật liệu cho động cơ
+        const engineGeo = new THREE.CylinderGeometry(0.12, 0.12, 0.7, 16);
+        const engineMat = new THREE.MeshStandardMaterial({color: 0x444444, roughness: 0.8, metalness: 0.2});
+        const tankGeo = new THREE.CylinderGeometry(0.08, 0.08, 0.9, 16);
+
+        // Cánh trái (Vuốt ngược và chứa động cơ)
+        const leftWingGroup = new THREE.Group();
+        leftWingGroup.rotation.y = -Math.PI / 8; // Góc vuốt ngược cánh
+
+        const leftWingGeo = new THREE.BoxGeometry(4.5, 0.08, 1.2);
+        leftWingGeo.translate(-2.25, 0, 0); // Đẩy tâm quay về gốc
+        const leftWing = new THREE.Mesh(leftWingGeo, b52CamoMat);
+        leftWingGroup.add(leftWing);
+
+        // Động cơ trong cánh trái
+        const podL1 = new THREE.Mesh(engineGeo, engineMat);
+        podL1.scale.set(1.5, 1, 1); // Cụm động cơ kép
+        podL1.rotation.x = Math.PI / 2;
+        podL1.position.set(-1.5, -0.2, 0.3);
+        leftWingGroup.add(podL1);
+
+        // Động cơ ngoài cánh trái
+        const podL2 = new THREE.Mesh(engineGeo, engineMat);
+        podL2.scale.set(1.5, 1, 1);
+        podL2.rotation.x = Math.PI / 2;
+        podL2.position.set(-3.0, -0.2, 0.3);
+        leftWingGroup.add(podL2);
+
+        // Thùng nhiên liệu phụ cánh trái
+        const tankL = new THREE.Mesh(tankGeo, b52CamoMat);
+        tankL.rotation.x = Math.PI / 2;
+        tankL.position.set(-4.2, -0.1, 0.3);
+        leftWingGroup.add(tankL);
+
+        b52Group.add(leftWingGroup);
+
+        // Cánh phải (Vuốt ngược và chứa động cơ đối xứng)
+        const rightWingGroup = new THREE.Group();
+        rightWingGroup.rotation.y = Math.PI / 8; // Góc vuốt ngược
+
+        const rightWingGeo = new THREE.BoxGeometry(4.5, 0.08, 1.2);
+        rightWingGeo.translate(2.25, 0, 0);
+        const rightWing = new THREE.Mesh(rightWingGeo, b52CamoMat);
+        rightWingGroup.add(rightWing);
+
+        // Động cơ trong cánh phải
+        const podR1 = new THREE.Mesh(engineGeo, engineMat);
+        podR1.scale.set(1.5, 1, 1);
+        podR1.rotation.x = Math.PI / 2;
+        podR1.position.set(1.5, -0.2, 0.3);
+        rightWingGroup.add(podR1);
+
+        // Động cơ ngoài cánh phải
+        const podR2 = new THREE.Mesh(engineGeo, engineMat);
+        podR2.scale.set(1.5, 1, 1);
+        podR2.rotation.x = Math.PI / 2;
+        podR2.position.set(3.0, -0.2, 0.3);
+        rightWingGroup.add(podR2);
+
+        // Thùng nhiên liệu phụ cánh phải
+        const tankR = new THREE.Mesh(tankGeo, b52CamoMat);
+        tankR.rotation.x = Math.PI / 2;
+        tankR.position.set(4.2, -0.1, 0.3);
+        rightWingGroup.add(tankR);
+
+        b52Group.add(rightWingGroup);
+
+        // Cánh đuôi đứng (Vertical Tail Fin) - Hơi ngả về sau
+        const tailFinGeo = new THREE.BoxGeometry(0.1, 1.5, 1.2);
+        const tailFin = new THREE.Mesh(tailFinGeo, b52CamoMat);
+        tailFin.position.set(0, 0.8, -2.5);
+        tailFin.rotation.x = -Math.PI / 6; 
+        b52Group.add(tailFin);
+
+        // Cánh đuôi ngang (Horizontal Stabilizers)
+        const hTailGeo = new THREE.BoxGeometry(2.5, 0.05, 0.8);
+        const hTail = new THREE.Mesh(hTailGeo, b52CamoMat);
+        hTail.position.set(0, 0.2, -2.8);
+        b52Group.add(hTail);
+
+        const posB = pos(STATE.B.x, STATE.B.y, STATE.B.z);
+        b52Group.position.copy(posB);
+        // Face it slightly
+        b52Group.rotation.y = -Math.PI / 4;
+        
+        // Lưu góc ban đầu để phục vụ rung lắc
+        b52Group.userData.baseRotationY = -Math.PI / 4;
+        b52Group.userData.basePosY = posB.y;
+
+        scene.add(b52Group);
+
+        // Texture Hào quang nhấp nháy cho Điểm A, B
+        function createGlowTexture(colorStr) {
+            const canvas = document.createElement('canvas');
+            canvas.width = 64; canvas.height = 64;
+            const ctx = canvas.getContext('2d');
+            const grad = ctx.createRadialGradient(32, 32, 0, 32, 32, 32);
+            grad.addColorStop(0, colorStr);
+            grad.addColorStop(1, 'rgba(0,0,0,0)');
+            ctx.fillStyle = grad;
+            ctx.fillRect(0, 0, 64, 64);
+            return new THREE.CanvasTexture(canvas);
+        }
+
+        // Blinking Points A and B
+        const pointGeo = new THREE.SphereGeometry(0.3, 16, 16);
+        const matA = new THREE.MeshBasicMaterial({ color: 0xff0000 });
+        const ptA = new THREE.Mesh(pointGeo, matA);
+        ptA.position.copy(posA);
+        
+        const haloA = new THREE.Sprite(new THREE.SpriteMaterial({ map: createGlowTexture('rgba(255,50,50,1)'), transparent: true, blending: THREE.AdditiveBlending }));
+        haloA.scale.set(3, 3, 3);
+        ptA.add(haloA);
+        ptA.userData.halo = haloA;
+        scene.add(ptA);
+
+        const matB = new THREE.MeshBasicMaterial({ color: 0x0088ff });
+        const ptB = new THREE.Mesh(pointGeo, matB);
+        ptB.position.copy(posB);
+
+        const haloB = new THREE.Sprite(new THREE.SpriteMaterial({ map: createGlowTexture('rgba(50,150,255,1)'), transparent: true, blending: THREE.AdditiveBlending }));
+        haloB.scale.set(3, 3, 3);
+        ptB.add(haloB);
+        ptB.userData.halo = haloB;
+        scene.add(ptB);
+
+        // Visual Guide Lines (Dashed)
+        const lineMat = new THREE.LineDashedMaterial({ color: 0x888888, dashSize: 0.3, gapSize: 0.2 });
+        function drawDashedLine(p1, p2) {
+            const geo = new THREE.BufferGeometry().setFromPoints([p1, p2]);
+            const line = new THREE.Line(geo, lineMat);
+            line.computeLineDistances();
+            scene.add(line);
+            return line;
+        }
+
+        // Initial guides for B to ground, then to axes
+        const posH_true = pos(STATE.H.x, STATE.H.y, STATE.H.z); // (10,9,0) -> Three(10, 0, -9)
+        drawDashedLine(posB, posH_true);
+        drawDashedLine(posH_true, pos(STATE.H.x, 0, 0)); // To X axis
+        drawDashedLine(posH_true, pos(0, STATE.H.y, 0)); // To Y axis (Math Y -> Three -Z)
+
+        // Objects to be drawn dynamically
+        let meshH, lineAH, lineAB, arcAngle;
+        const targetBlinkVec = new THREE.Group();
+        scene.add(targetBlinkVec);
+
+        // --- RADAR MODEL ---
+        const radarBaseGroup = new THREE.Group();
+
+        // Radar Base (Chân đế rằn ri xanh nâu)
+        const radarBaseGeo = new THREE.CylinderGeometry(0.8, 1.2, 1.5, 8);
+        const radarBase = new THREE.Mesh(radarBaseGeo, b52CamoMat); // Updated to camouflage texture
+        radarBase.position.y = 0.75;
+        radarBaseGroup.add(radarBase);
+
+        // Radar Dish Group (Lòng chảo và chùm sóng)
+        let radarDishGroup = new THREE.Group();
+        radarDishGroup.position.y = 1.8;
+
+        // Lòng chảo lõm (Concave Dish)
+        // Tạo một nửa hình cầu để làm lòng chảo, mặt lõm được chỉnh để bắt ánh sáng
+        const dishGeo = new THREE.SphereGeometry(2, 32, 16, 0, Math.PI * 2, 0, Math.PI / 3.5);
+        const dishMat = new THREE.MeshStandardMaterial({ color: 0xdddddd, side: THREE.DoubleSide, roughness: 0.4, metalness: 0.6 });
+        const dish = new THREE.Mesh(dishGeo, dishMat);
+        // Lật mặt lõm (phần hở) hướng ra ngoài về phía dương của trục Z
+        dish.rotation.x = -Math.PI / 2;
+        dish.position.z = 1.5; // Dời chảo ra trước để đáy chảo khớp với gốc ăng-ten
+        radarDishGroup.add(dish);
+
+        // Cục thu sóng (Tiêu điểm chấm vàng)
+        const bulbPos = new THREE.Vector3(0, 0, 3.2); // Đưa tiêu điểm ra xa hợp lý
+        const bulbGeo = new THREE.SphereGeometry(0.25, 16, 16);
+        const bulbMat = new THREE.MeshStandardMaterial({ color: 0xffff00, roughness: 0.3, metalness: 0.5 }); // Chấm vàng rực
+        const bulb = new THREE.Mesh(bulbGeo, bulbMat);
+        bulb.position.copy(bulbPos);
+        radarDishGroup.add(bulb);
+
+        // 4 thanh chống chụm lại (Struts) gắn sát chặt vào vành chảo
+        const strutMat = new THREE.MeshStandardMaterial({ color: 0x444444, roughness: 0.5 });
+        
+        // Tính toán CHÍNH XÁC tọa độ viền mép của hình cầu (SphereGeometry)
+        const sphereRadius = 2;
+        const thetaLength = Math.PI / 3.5;
+        const rimRadius = sphereRadius * Math.sin(thetaLength); // Bán kính vành chảo
+        const rimZ = 1.5 - sphereRadius * Math.cos(thetaLength); // Tọa độ Z chính xác tại viền
+
+        const R = rimRadius - 0.05; // Thu nhẹ lại 0.05 để cắm chắc vào viền trong của chảo
+        const Z_base = rimZ; // Đặt chính xác tại tọa độ Z của mép chảo
+
+        // Xếp 4 thanh theo hình chữ X chéo nhau để chịu lực tốt hơn giống hình vẽ
+        const angle = Math.PI / 4;
+        const basePoints = [
+            new THREE.Vector3(R * Math.cos(angle), R * Math.sin(angle), Z_base),
+            new THREE.Vector3(-R * Math.cos(angle), R * Math.sin(angle), Z_base),
+            new THREE.Vector3(-R * Math.cos(angle), -R * Math.sin(angle), Z_base),
+            new THREE.Vector3(R * Math.cos(angle), -R * Math.sin(angle), Z_base)
+        ];
+
+        basePoints.forEach(p => {
+            const dist = p.distanceTo(bulbPos);
+            const strutGeo = new THREE.CylinderGeometry(0.04, 0.04, dist, 8); // Làm thanh to và cứng cáp hơn
+            const strut = new THREE.Mesh(strutGeo, strutMat);
+            // Đặt thanh ở vị trí giữa
+            const mid = new THREE.Vector3().addVectors(p, bulbPos).multiplyScalar(0.5);
+            strut.position.copy(mid);
+            // Xoay thanh nghiêng theo hướng vươn tới chấm vàng
+            strut.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), new THREE.Vector3().subVectors(bulbPos, p).normalize());
+            radarDishGroup.add(strut); // Gắn chung vào nhóm lòng chảo để luôn xoay đồng bộ
+        });
+
+        // Chùm sóng mờ làm nền tảng (Radar Cone Beam)
+        // Dùng CylinderGeometry để đáy nhỏ (vừa bằng chảo) và đầu to toả rộng cực lớn
+        const beamLength = 65; // Vươn rất xa vào không gian
+        const beamMaxRadius = 40; // Loe ra rất rộng để phủ cả máy bay
+        
+        const beamGeo = new THREE.CylinderGeometry(beamMaxRadius, rimRadius, beamLength, 64, 1, true); 
+        beamGeo.rotateX(Math.PI / 2); // Nằm dọc theo trục Z
+        beamGeo.translate(0, 0, rimZ + beamLength / 2);  // Đáy khớp chính xác miệng chảo
+        const beamMat = new THREE.MeshBasicMaterial({ 
+            color: 0x88eeff, // Xanh trắng nhạt
+            transparent: true, 
+            opacity: 0.05, // Sóng nền mờ mờ ảo ảo
+            blending: THREE.AdditiveBlending, // Chế độ hoà trộn phát sáng
+            side: THREE.DoubleSide,
+            depthWrite: false
+        });
+        const radarBeam = new THREE.Mesh(beamGeo, beamMat);
+        radarDishGroup.add(radarBeam);
+
+        // Các gợn sóng lan tỏa (Wave Rings)
+        let waveRings = [];
+        const ringGeo = new THREE.RingGeometry(0.96, 1, 64); // Vòng tròn nét mỏng và mịn hơn
+
+        for(let i = 0; i < 9; i++) { // Tăng số vòng sóng lên để quét liên tục
+            // Khởi tạo material riêng cho từng vòng để hiệu ứng mờ (opacity) độc lập
+            const ringMat = new THREE.MeshBasicMaterial({ 
+                color: 0x88eeff, // Xanh trắng
+                transparent: true, 
+                opacity: 0.8, 
+                blending: THREE.AdditiveBlending, // Vòng tròn sáng chói
+                side: THREE.DoubleSide, 
+                depthWrite: false 
+            });
+            const ring = new THREE.Mesh(ringGeo, ringMat);
+            ring.position.z = rimZ + i * (beamLength / 9); // Trải đều trong nón sóng
+            radarDishGroup.add(ring);
+            waveRings.push(ring);
+        }
+
+        radarBaseGroup.add(radarDishGroup);
+        // Đặt Radar ngay tại gốc toạ độ O (0,0,0) trên mặt đất
+        radarBaseGroup.position.set(0, 0, 0);
+        scene.add(radarBaseGroup);
+
+        // Stars
+        const starsGeo = new THREE.BufferGeometry();
+        const starsCount = 1000;
+        const posArray = new Float32Array(starsCount * 3);
+        for(let i = 0; i < starsCount * 3; i++) {
+            posArray[i] = (Math.random() - 0.5) * 100;
+            if(i%3 === 1) posArray[i] = Math.random() * 50; // Keep above ground
+        }
+        starsGeo.setAttribute('position', new THREE.BufferAttribute(posArray, 3));
+        const starsMat = new THREE.PointsMaterial({ size: 0.1, color: 0xffffff });
+        const stars = new THREE.Points(starsGeo, starsMat);
+        scene.add(stars);
+
+        function checkStep1() {
+            initAudio();
+            const hx = parseInt(document.getElementById('hX').value);
+            const hy = parseInt(document.getElementById('hY').value);
+            const hz = parseInt(document.getElementById('hZ').value);
+
+            if (hx === STATE.H.x && hy === STATE.H.y && hz === STATE.H.z) {
+                // Correct
+                document.getElementById('hint1').classList.add('hidden');
+                document.getElementById('step1').classList.replace('active', 'completed');
+                document.getElementById('step2').classList.add('active');
+                
+                // Draw H
+                const matH = new THREE.MeshBasicMaterial({ color: 0xffff00 });
+                meshH = new THREE.Mesh(pointGeo, matH);
+                meshH.position.copy(posH_true);
+                scene.add(meshH);
+                
+                const spriteH = createTextSprite("H", "#ffff00");
+                spriteH.position.copy(posH_true).add(new THREE.Vector3(0, 0.8, 0));
+                scene.add(spriteH);
+                
+                showMessage("Đã xác định tọa độ H(10; 9; 0)");
+            } else {
+                let hint = "Chưa chính xác.";
+                if (hz !== 0) hint = "Gợi ý: Điểm H nằm trên mặt phẳng (Oxy) thì cao độ (z) bằng bao nhiêu?";
+                else hint = "Gợi ý: Từ B chiếu vuông góc xuống (Oxy) thì x, y giữ nguyên.";
+                const hintEl = document.getElementById('hint1');
+                hintEl.innerText = hint;
+                hintEl.classList.remove('hidden');
+            }
+        }
+
+        function checkStep2() {
+            initAudio();
+            const vx = parseInt(document.getElementById('vX').value);
+            const vy = parseInt(document.getElementById('vY').value);
+            const vz = parseInt(document.getElementById('vZ').value);
+
+            const ansX = STATE.B.x - STATE.A.x; // 3
+            const ansY = STATE.B.y - STATE.A.y; // 4
+            const ansZ = STATE.B.z - STATE.A.z; // 12
+
+            if (vx === ansX && vy === ansY && vz === ansZ) {
+                document.getElementById('hint2').classList.add('hidden');
+                document.getElementById('step2').classList.replace('active', 'completed');
+                document.getElementById('step3').classList.add('active');
+                showMessage(`Tìm được Vectơ AB = (${ansX}; ${ansY}; ${ansZ})`);
+            } else {
+                document.getElementById('hint2').classList.remove('hidden');
+            }
+        }
+
+        function checkStep3() {
+            initAudio();
+            const angle = parseInt(document.getElementById('angle').value);
+            // Expected ~ 67.38
+            if (angle >= 66 && angle <= 68) {
+                document.getElementById('hint3').classList.add('hidden');
+                document.getElementById('step3').classList.replace('active', 'completed');
+                
+                // Draw line AH and AB
+                const lineMatSolid = new THREE.LineBasicMaterial({ color: 0xffff00, linewidth: 2 });
+                lineAH = new THREE.Line(new THREE.BufferGeometry().setFromPoints([posA, posH_true]), lineMatSolid);
+                scene.add(lineAH);
+                
+                const lineMatAB = new THREE.LineBasicMaterial({ color: 0xff0000, linewidth: 3 });
+                lineAB = new THREE.Line(new THREE.BufferGeometry().setFromPoints([posA, posB]), lineMatAB);
+                scene.add(lineAB);
+
+                // Draw Arc (approx)
+                const curve = new THREE.QuadraticBezierCurve3(
+                    posA.clone().add(posH_true.clone().sub(posA).normalize().multiplyScalar(2)),
+                    posA.clone().add(new THREE.Vector3(0, 1, 0)), // Control pt
+                    posA.clone().add(posB.clone().sub(posA).normalize().multiplyScalar(2))
+                );
+                const arcGeo = new THREE.BufferGeometry().setFromPoints(curve.getPoints(20));
+                arcAngle = new THREE.Line(arcGeo, new THREE.LineBasicMaterial({ color: 0xffaa00 }));
+                scene.add(arcAngle);
+
+                // Show Fire button
+                document.getElementById('btn-fire').style.display = 'block';
+                showMessage("Đã khóa mục tiêu! Sẵn sàng khai hỏa.");
+
+                // Đánh dấu trạng thái đã khóa góc ngắm
+                STATE.isLocked = true;
+                
+                // Add blinking targeting vector
+                createBlinkingTargetVec();
+            } else {
+                document.getElementById('hint3').classList.remove('hidden');
+            }
+        }
+
+        function createBlinkingTargetVec() {
+            // Create dashed line with moving effect via shader or just toggling
+            const mat = new THREE.LineDashedMaterial({ color: 0xff0000, dashSize: 0.5, gapSize: 0.5 });
+            const geo = new THREE.BufferGeometry().setFromPoints([posA, posB]);
+            const line = new THREE.Line(geo, mat);
+            line.computeLineDistances();
+            targetBlinkVec.add(line);
+        }
+
+        const fireTex = createParticleTexture();
+        
+        function createParticleTexture() {
+            const canvas = document.createElement('canvas');
+            canvas.width = 32; canvas.height = 32;
+            const ctx = canvas.getContext('2d');
+            const gradient = ctx.createRadialGradient(16, 16, 0, 16, 16, 16);
+            gradient.addColorStop(0, 'rgba(255,255,255,1)');
+            gradient.addColorStop(0.2, 'rgba(255,200,0,1)');
+            gradient.addColorStop(0.4, 'rgba(255,50,0,0.8)');
+            gradient.addColorStop(1, 'rgba(0,0,0,0)');
+            ctx.fillStyle = gradient;
+            ctx.fillRect(0, 0, 32, 32);
+            return new THREE.CanvasTexture(canvas);
+        }
+
+        const particleGeo = new THREE.BufferGeometry();
+        const particleMat = new THREE.PointsMaterial({
+            size: 1.5, map: fireTex, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false
+        });
+        const maxParticles = 1000;
+        const pPos = new Float32Array(maxParticles * 3);
+        const pAlpha = new Float32Array(maxParticles);
+        particleGeo.setAttribute('position', new THREE.BufferAttribute(pPos, 3));
+        particleGeo.setAttribute('alpha', new THREE.BufferAttribute(pAlpha, 1));
+        const exhaustSystem = new THREE.Points(particleGeo, particleMat);
+        scene.add(exhaustSystem);
+
+        let pIndex = 0;
+
+        function createSmokeTexture() {
+            const canvas = document.createElement('canvas');
+            canvas.width = 32; canvas.height = 32;
+            const ctx = canvas.getContext('2d');
+            const grad = ctx.createRadialGradient(16,16,0, 16,16,16);
+            grad.addColorStop(0, 'rgba(150,150,150,0.8)');
+            grad.addColorStop(1, 'rgba(150,150,150,0)');
+            ctx.fillStyle = grad;
+            ctx.fillRect(0,0,32,32);
+            return new THREE.CanvasTexture(canvas);
+        }
+
+        // Shader để hỗ trợ thuộc tính alpha cho từng hạt khói
+        const smokeVertShader = `
+            attribute float alpha;
+            varying float vAlpha;
+            void main() {
+                vAlpha = alpha;
+                vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
+                gl_PointSize = 30.0 * (1.0 / -mvPosition.z);
+                gl_Position = projectionMatrix * mvPosition;
+            }
+        `;
+        const smokeFragShader = `
+            uniform sampler2D map;
+            varying float vAlpha;
+            void main() {
+                vec4 texColor = texture2D(map, gl_PointCoord);
+                gl_FragColor = vec4(texColor.rgb, texColor.a * vAlpha);
+            }
+        `;
+
+        const b52SmokeGeo = new THREE.BufferGeometry();
+        const b52SmokeMax = 800;
+        const b52SPos = new Float32Array(b52SmokeMax * 3);
+        const b52SAlpha = new Float32Array(b52SmokeMax);
+        b52SmokeGeo.setAttribute('position', new THREE.BufferAttribute(b52SPos, 3));
+        b52SmokeGeo.setAttribute('alpha', new THREE.BufferAttribute(b52SAlpha, 1));
+        
+        const b52SmokeMat = new THREE.ShaderMaterial({
+            uniforms: { map: { value: createSmokeTexture() } },
+            vertexShader: smokeVertShader,
+            fragmentShader: smokeFragShader,
+            transparent: true, depthWrite: false, blending: THREE.NormalBlending
+        });
+        const b52SmokeSystem = new THREE.Points(b52SmokeGeo, b52SmokeMat);
+        scene.add(b52SmokeSystem);
+
+        STATE.b52Particles = [];
+        let b52PIndex = 0;
+
+        function emitB52Smoke(engineMesh) {
+            if(b52PIndex >= b52SmokeMax) b52PIndex = 0;
+            // Tính toán toạ độ thực tế của đuôi động cơ
+            const engineWorldPos = new THREE.Vector3(0, 0, -0.4);
+            engineWorldPos.applyMatrix4(engineMesh.matrixWorld);
+
+            STATE.b52Particles[b52PIndex] = {
+                life: 1.0,
+                pos: engineWorldPos.clone(),
+                // Hướng khói phụt ra phía sau máy bay
+                vel: new THREE.Vector3((Math.random()-0.5)*0.05, (Math.random()-0.5)*0.05, -0.15 - Math.random()*0.1).applyQuaternion(b52Group.quaternion)
+            };
+            b52PIndex++;
+        }
+
+        function emitExhaust() {
+            if(pIndex >= maxParticles) pIndex = 0;
+            // Get position behind missile
+            const tailPos = new THREE.Vector3(0, 0, -1.5);
+            tailPos.applyMatrix4(missileWrapper.matrixWorld);
+            
+            STATE.particles[pIndex] = {
+                life: 1.0,
+                pos: tailPos.clone().add(new THREE.Vector3((Math.random()-0.5)*0.5, (Math.random()-0.5)*0.5, (Math.random()-0.5)*0.5)),
+                vel: new THREE.Vector3((Math.random()-0.5)*0.2, -0.1, (Math.random()-0.5)*0.2)
+            };
+            pIndex++;
+        }
+
+        function createExplosion(origin) {
+            playSound('explosion');
+            
+            // Fireball
+            const sphereGeo = new THREE.SphereGeometry(2, 32, 32);
+            const sphereMat = new THREE.MeshBasicMaterial({ color: 0xffaa00, transparent: true, opacity: 0.8 });
+            const explosionSphere = new THREE.Mesh(sphereGeo, sphereMat);
+            explosionSphere.position.copy(origin);
+            scene.add(explosionSphere);
+            STATE.explosion = { mesh: explosionSphere, life: 1.0 };
+
+            // Debris
+            const debrisGeo = new THREE.TetrahedronGeometry(0.3);
+            const debrisMat = new THREE.MeshBasicMaterial({ color: 0x222222 });
+            for(let i=0; i<30; i++) {
+                const mesh = new THREE.Mesh(debrisGeo, debrisMat);
+                mesh.position.copy(origin);
+                mesh.rotation.set(Math.random()*Math.PI, Math.random()*Math.PI, Math.random()*Math.PI);
+                scene.add(mesh);
+                STATE.debris.push({
+                    mesh: mesh,
+                    vel: new THREE.Vector3((Math.random()-0.5)*2, Math.random()*2, (Math.random()-0.5)*2),
+                    rotVel: new THREE.Vector3(Math.random(), Math.random(), Math.random())
+                });
+            }
+        }
+
+        function fireMissile() {
+            if(STATE.isFiring) return;
+            initAudio();
+            playSound('launch');
+            STATE.isFiring = true;
+            document.getElementById('btn-fire').style.display = 'none';
+            scene.remove(targetBlinkVec); // Remove targeting line
+            
+            // Unparent missile to move it freely
+            launcherGroup.remove(missileWrapper);
+            scene.add(missileWrapper);
+            // Reapply world position and rotation
+            missileWrapper.position.copy(posA);
+            missileWrapper.lookAt(posB);
+        }
+
+        const clock = new THREE.Clock();
+
+        // --- HỆ THỐNG BOM ---
+        const bombGeo = new THREE.CylinderGeometry(0.08, 0.08, 0.6, 8); // Tăng kích thước nhẹ để nhìn rõ màu xám
+        bombGeo.rotateX(Math.PI / 2); // Cắt ngang hình trụ để bom nằm ngang
+        const bombMat = new THREE.MeshStandardMaterial({ color: 0x888888, roughness: 0.6, metalness: 0.5 }); // Màu xám kim loại
+        const activeBombs = [];
+        const activeGroundFires = []; // Mảng chứa các hiệu ứng lửa trên mặt đất
+
+        function createGroundFire(pos) {
+            const fireGroup = new THREE.Group();
+            fireGroup.position.copy(pos);
+            fireGroup.position.y = 0.5; // Nâng lên mặt đất một chút
+
+            // Khối lửa chính rực rỡ dưới đất
+            const fireSprite = new THREE.Sprite(new THREE.SpriteMaterial({ 
+                map: createGlowTexture('rgba(255, 60, 0, 1)'), 
+                color: 0xff5500, 
+                transparent: true, 
+                blending: THREE.AdditiveBlending 
+            }));
+            fireSprite.scale.set(3, 4, 3);
+            fireGroup.add(fireSprite);
+            
+            // Khói bốc lên từ vụ nổ bom
+            const smokeSprite = new THREE.Sprite(new THREE.SpriteMaterial({
+                map: createSmokeTexture(),
+                color: 0x333333,
+                transparent: true,
+                opacity: 0.8
+            }));
+            smokeSprite.scale.set(4, 4, 4);
+            smokeSprite.position.y = 1;
+            fireGroup.add(smokeSprite);
+
+            scene.add(fireGroup);
+            activeGroundFires.push({
+                group: fireGroup,
+                fire: fireSprite,
+                smoke: smokeSprite,
+                life: 2.0, // Tồn tại 2 giây rồi tắt
+                maxLife: 2.0
+            });
+        }
+
+        // Tạo chất liệu vệt lửa vàng bám theo bom
+        const bombFireMat = new THREE.SpriteMaterial({ 
+            map: createGlowTexture('rgba(255, 200, 0, 1)'), // Màu vàng rực
+            color: 0xffdd00, // Nhấn thêm tông vàng chói
+            transparent: true, 
+            blending: THREE.AdditiveBlending 
+        });
+
+        function animate() {
+            requestAnimationFrame(animate);
+            const delta = clock.getDelta();
+            const time = clock.getElapsedTime();
+
+            controls.update();
+            
+            if (!STATE.exploded) {
+                // Rung lắc máy bay
+                const t = time * 15;
+                b52Group.position.y = b52Group.userData.basePosY + Math.sin(t) * 0.03 + (Math.random()-0.5) * 0.02; // Nhồi lên xuống
+                b52Group.rotation.z = Math.sin(t * 0.8) * 0.05; // Lắc lư cánh
+                b52Group.rotation.x = Math.sin(t * 1.2) * 0.02; // Chúc ngóc đầu nhẹ
+                
+                // Phun khói dày đặc từ 4 động cơ (Gọi 2 lần mỗi frame để khói xả nhiều hơn)
+                emitB52Smoke(podL1); emitB52Smoke(podL1);
+                emitB52Smoke(podL2); emitB52Smoke(podL2);
+                emitB52Smoke(podR1); emitB52Smoke(podR1);
+                emitB52Smoke(podR2); emitB52Smoke(podR2);
+
+                // Rải bom ngang rơi nhẹ
+                if (Math.random() < 0.015) { // Tỷ lệ giảm xuống (1.5%) để bom rải ít lại
+                    const bomb = new THREE.Mesh(bombGeo, bombMat);
+                    
+                    // Thêm quầng lửa vàng rực phát ra từ đuôi quả bom
+                    const fireSprite = new THREE.Sprite(bombFireMat);
+                    fireSprite.scale.set(1.5, 1.5, 1.5); // Độ lớn của ngọn lửa
+                    fireSprite.position.set(0, 0, 0.3); // Gắn lùi về phía đuôi bom
+                    bomb.add(fireSprite);
+
+                    // Sinh ra từ khu vực khoang bụng máy bay với độ nhiễu ngẫu nhiên
+                    const spawnOffset = new THREE.Vector3((Math.random() - 0.5) * 1.5, -0.4, (Math.random() - 0.5) * 3.5);
+                    spawnOffset.applyMatrix4(b52Group.matrixWorld);
+                    bomb.position.copy(spawnOffset);
+                    
+                    // Giữ dáng bom nằm ngang theo hướng hiện tại của máy bay
+                    bomb.rotation.copy(b52Group.rotation);
+                    scene.add(bomb);
+                    
+                    activeBombs.push({
+                        mesh: bomb,
+                        vel: new THREE.Vector3((Math.random() - 0.5) * 0.5, -0.5 - Math.random() * 0.3, (Math.random() - 0.5) * 0.5) // Tốc độ rơi ban đầu chậm lại
+                    });
+                }
+            }
+
+            // --- Cập nhật Radar quét 360 độ ---
+            if (radarDishGroup && !STATE.exploded) {
+                // Lòng chảo ngóc lên trời một góc cố định để quét bầu trời (khoảng 60 độ)
+                radarDishGroup.rotation.x = -Math.PI / 3; 
+                // Xoay toàn bộ trạm radar 360 độ liên tục quanh trục thẳng đứng Y (trục Oz của Toán học)
+                radarBaseGroup.rotation.y -= delta * 1.5;
+                
+                // Hiệu ứng các gợn sóng tỏa ra liên tục
+                const bMax = 65; // Độ vươn xa
+                const rMax = 40; // Độ loe rộng (bán kính tối đa)
+                const rMin = 1.56; // Bán kính miệng chảo (khớp hoàn toàn)
+                const zMin = 0.25; // Tọa độ Z miệng chảo
+
+                for(let i=0; i<waveRings.length; i++) {
+                    const ring = waveRings[i];
+                    ring.position.z += delta * 25; // Tốc độ sóng bay lan ra
+                    
+                    if(ring.position.z > zMin + bMax) {
+                        ring.position.z = zMin; // Sóng chạm đích sẽ quay lại phát ra từ miệng chảo
+                    }
+                    
+                    // Tính tỷ lệ quãng đường sóng đã bay
+                    const progress = (ring.position.z - zMin) / bMax;
+                    
+                    // Sóng loe rộng dần ra theo tiến trình bay
+                    const radius = rMin + progress * (rMax - rMin);
+                    ring.scale.set(radius, radius, 1);
+                    
+                    // Sóng mờ dần đi vào hư không ở khoảng cách xa
+                    ring.material.opacity = 1.0 * (1.0 - progress);
+                }
+            }
+
+            // Cập nhật khói B-52
+            const bPos = b52SmokeSystem.geometry.attributes.position.array;
+            const bAlpha = b52SmokeSystem.geometry.attributes.alpha.array;
+            for(let i=0; i<b52SmokeMax; i++) {
+                const p = STATE.b52Particles[i];
+                if(p && p.life > 0) {
+                    p.life -= delta * 0.4; // Tốc độ tan khói
+                    p.pos.add(p.vel);
+                    bPos[i*3] = p.pos.x;
+                    bPos[i*3+1] = p.pos.y;
+                    bPos[i*3+2] = p.pos.z;
+                    bAlpha[i] = p.life * 0.8; 
+                } else {
+                    bAlpha[i] = 0;
+                }
+            }
+            b52SmokeSystem.geometry.attributes.position.needsUpdate = true;
+            b52SmokeSystem.geometry.attributes.alpha.needsUpdate = true;
+
+            // Blinking effects
+            const blink = Math.abs(Math.sin(time * 3));
+            matA.opacity = 0.5 + 0.5 * blink; matA.transparent = true;
+            matB.opacity = 0.5 + 0.5 * blink; matB.transparent = true;
+            ptA.userData.halo.material.opacity = 0.3 + 0.7 * blink;
+            ptB.userData.halo.material.opacity = 0.3 + 0.7 * blink;
+            
+            if(meshH) { meshH.material.opacity = 0.5 + 0.5 * blink; meshH.material.transparent = true; }
+            if(targetBlinkVec.children.length > 0) {
+                targetBlinkVec.children[0].material.dashSize = 0.5 + blink*0.5;
+            }
+
+            // --- HIỆU ỨNG TÊN LỬA TÌM GÓC NGẮM ---
+            if (!STATE.isFiring) {
+                // Bệ phóng luôn quay ngang bám theo hướng của B-52
+                launcherGroup.lookAt(posB.x, launcherGroup.position.y, posB.z);
+
+                if (!STATE.isLocked) {
+                    // Trạng thái chưa khóa: Mũi tên lửa gật gù quét lên xuống (radar dò tìm)
+                    const scanAngle = -Math.PI / 4 + Math.sin(time * 3) * 0.25; 
+                    missileWrapper.rotation.set(scanAngle, 0, 0);
+                    arm.rotation.x = -scanAngle; // Cánh tay đỡ nghiêng đồng bộ khớp với tên lửa
+                } else {
+                    // Trạng thái đã khóa (isLocked = true): Khóa chặt góc ngắm vào B-52
+                    const deltaY = posB.y - posA.y;
+                    const distXZ = Math.hypot(posB.x - posA.x, posB.z - posA.z);
+                    const lockPitch = Math.atan2(deltaY, distXZ); // Tính chuẩn xác góc ngắm
+                    
+                    missileWrapper.rotation.set(-lockPitch, 0, 0);
+                    arm.rotation.x = lockPitch;
+                }
+            }
+
+            // Firing Animation
+            if (STATE.isFiring) {
+                const dist = missileWrapper.position.distanceTo(posB);
+                
+                if (dist > 0.5) {
+                    // Move towards target
+                    const dir = new THREE.Vector3().subVectors(posB, missileWrapper.position).normalize();
+                    missileWrapper.position.add(dir.multiplyScalar(STATE.missileSpeed * delta));
+                    emitExhaust();
+                    emitExhaust(); // Emit more for thick smoke
+                } else if (!STATE.exploded) {
+                    // Hit!
+                    STATE.exploded = true;
+                    scene.remove(b52Group);
+                    scene.remove(ptB);
+                    scene.remove(missileWrapper);
+                    createExplosion(posB);
+                    showMessage("TIÊU DIỆT ĐỊCH THÀNH CÔNG!", "success");
+                }
+            }
+
+            // Update Particles
+            const positions = exhaustSystem.geometry.attributes.position.array;
+            const alphas = exhaustSystem.geometry.attributes.alpha.array;
+            
+            for(let i=0; i<maxParticles; i++) {
+                const p = STATE.particles[i];
+                if(p && p.life > 0) {
+                    p.life -= delta * 0.8;
+                    p.pos.add(p.vel);
+                    p.vel.y += 0.05 * delta; // Smoke rises slightly
+                    
+                    positions[i*3] = p.pos.x;
+                    positions[i*3+1] = p.pos.y;
+                    positions[i*3+2] = p.pos.z;
+                    alphas[i] = p.life;
+                } else {
+                    alphas[i] = 0; // Hide dead
+                }
+            }
+            exhaustSystem.geometry.attributes.position.needsUpdate = true;
+            exhaustSystem.geometry.attributes.alpha.needsUpdate = true;
+
+            // Update Explosion
+            if (STATE.explosion && STATE.explosion.life > 0) {
+                STATE.explosion.life -= delta;
+                STATE.explosion.mesh.scale.addScalar(delta * 5);
+                STATE.explosion.mesh.material.opacity = STATE.explosion.life;
+                if(STATE.explosion.life <= 0) scene.remove(STATE.explosion.mesh);
+            }
+
+            // Update Debris
+            for(let i=STATE.debris.length-1; i>=0; i--) {
+                const d = STATE.debris[i];
+                d.vel.y -= 9.8 * delta; // Gravity
+                d.mesh.position.add(d.vel.clone().multiplyScalar(delta));
+                d.mesh.rotation.x += d.rotVel.x * delta;
+                d.mesh.rotation.y += d.rotVel.y * delta;
+                if(d.mesh.position.y < 0) { // Hit ground
+                    scene.remove(d.mesh);
+                    STATE.debris.splice(i, 1);
+                }
+            }
+
+            // Cập nhật vị trí bom rơi
+            for(let i=activeBombs.length-1; i>=0; i--) {
+                const b = activeBombs[i];
+                b.vel.y -= 1.0 * delta; // Trọng lực tác động nhẹ lại để bom rơi chậm hơn
+                b.mesh.position.add(b.vel.clone().multiplyScalar(delta));
+                
+                // Nếu bom rơi chạm đất thì biến mất và tạo lửa dưới đất
+                if(b.mesh.position.y <= 0) {
+                    createGroundFire(new THREE.Vector3(b.mesh.position.x, 0, b.mesh.position.z));
+                    scene.remove(b.mesh);
+                    activeBombs.splice(i, 1);
+                }
+            }
+
+            // Cập nhật ngọn lửa dưới mặt đất do bom nổ
+            for(let i=activeGroundFires.length-1; i>=0; i--) {
+                const f = activeGroundFires[i];
+                f.life -= delta;
+                
+                // Hiệu ứng lửa bập bùng và tàn dần
+                const flicker = 0.8 + Math.random() * 0.2;
+                f.fire.scale.set(3 * (f.life/f.maxLife) * flicker, 4 * (f.life/f.maxLife) * flicker, 3);
+                f.fire.material.opacity = f.life/f.maxLife;
+                
+                // Hiệu ứng khói cuộn lên cao và tan dần
+                f.smoke.position.y += delta * 2;
+                f.smoke.scale.addScalar(delta * 2);
+                f.smoke.material.opacity = (f.life/f.maxLife) * 0.5;
+                
+                // Xóa lửa khi hết thời gian
+                if(f.life <= 0) {
+                    scene.remove(f.group);
+                    activeGroundFires.splice(i, 1);
+                }
+            }
+
+            renderer.render(scene, camera);
+        }
+
+        // Handle Resize
+        window.addEventListener('resize', onWindowResize, false);
+        function onWindowResize() {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        }
+
+        // Start
+        window.onload = animate;
+
+    </script>
+</body>
+</html>
